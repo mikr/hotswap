@@ -15,9 +15,9 @@ module.main() is called. Hotswapping is enabled so that changes
 in the source code take effect without restarting the program.
 """
 
-version = "0.1"
+version = "0.3"
 __author__ = "Michael Krause"
-__email__ = "michael@krause-software.de"
+__email__ = "michael@krause-software.com"
 
 #
 # CREDITS
@@ -36,6 +36,21 @@ import sys
 import types
 import imp
 import getopt
+
+PY2 = sys.version_info[0] == 2
+PY3 = sys.version_info[0] == 3
+
+try:
+    reload
+except NameError:
+    from importlib import reload
+
+if PY2:
+    TypeType = types.TypeType
+    ClassType = types.ClassType
+else:
+    TypeType = type
+    ClassType = type
 
 def _get_compiled_ext():
     for ext, mode, typ in imp.get_suffixes():
@@ -63,7 +78,7 @@ class ModuleWatcher:
                   verbose=VERBOSE):
         if self.running:
             if verbose:
-                print "# hotswap already running"
+                print("# hotswap already running")
             return
         self.SKIP_SYSTEM_MODULES = skipsystem
         self.SECONDS_BETWEEN_CHECKS = seconds
@@ -71,8 +86,8 @@ class ModuleWatcher:
         self.VERBOSE = verbose
 
         if self.VERBOSE:
-            print "# starting hotswap seconds=%s, skipsystem=%s" \
-                % (self.SECONDS_BETWEEN_CHECKS, self.SKIP_SYSTEM_MODULES)
+            print("# starting hotswap seconds=%s, skipsystem=%s" \
+                % (self.SECONDS_BETWEEN_CHECKS, self.SKIP_SYSTEM_MODULES))
         self.running = 1
         self.thread = threading.Thread(target=self._check_modules)
         self.thread.setDaemon(1)
@@ -81,17 +96,18 @@ class ModuleWatcher:
     def stop(self):
         if not self.running:
             if self.VERBOSE:
-                print "# hotswap not running"
+                print("# hotswap not running")
             return
         self.running = 0
         self.thread.join()
         if self.VERBOSE:
-            print "# hotswap stopped"
+            print("# hotswap stopped")
 
     def _check_modules(self):
+        last_modified = {}
         while self.running:
             time.sleep(self.SECONDS_BETWEEN_CHECKS)
-            for m in sys.modules.values():
+            for m in list(sys.modules.values()):
                 if not hasattr(m, '__file__'):
                     # We only check modules that have a plain file
                     # as Python source.
@@ -111,25 +127,33 @@ class ModuleWatcher:
 
                 if ext.lower() == '.py':
                     ext = PY_COMPILED_EXT
-                    file = path + PY_COMPILED_EXT
 
                 if ext != PY_COMPILED_EXT:
                     continue
 
+                sourcefile = path + '.py'
                 try:
-                    if os.stat(file[:-1])[8] <= os.stat(file)[8]:
-                        # This module is unchanged if the .py-file
-                        # is older than the compiled .pyc or .pyo file.
+                    source_mtime = os.stat(sourcefile)[8]
+                    if sourcefile not in last_modified:
+                        last_modified[sourcefile] = source_mtime
                         continue
+                    else:
+                        if source_mtime <= last_modified[sourcefile]:
+                            continue
+                        last_modified[sourcefile] = source_mtime
                 except OSError:
                     continue
 
                 try:
                     superreload(m, verbose=self.VERBOSE)
+                except:
+                    import traceback
+                    traceback.print_exc(0)
+                try:
                     if hasattr(m, 'onHotswap') and callable(m.onHotswap):
                         # The module can invalidate cached results or post
                         # redisplay operations by defining function named
-                        # onHotswap that is called after a reload. 
+                        # onHotswap that is called after a reload.
                         m.onHotswap()
                     if callable(self.NOTIFYFUNC):
                         self.NOTIFYFUNC(module=m)
@@ -162,35 +186,21 @@ def superreload(module,
         _old_objects.setdefault(key, []).append(object)
 
     if verbose:
-        print "# reloading module %r" % module
+        print("# reloading module %r" % module)
     newmodule = reload(module)
+    if newmodule is None:
+        return module
     # XXX We have a problem here if importing the module fails!
 
     # iterate over all objects and update them
     for name, new_obj in newmodule.__dict__.items():
         # print "updating", `name`, type(new_obj), `new_obj`
         key = (newmodule.__name__, name)
-        if _old_objects.has_key(key):
+        if key in _old_objects:
             for old_obj in _old_objects[key]:
-                if type(old_obj) == types.TypeType and \
-                   old_obj.__module__ == newmodule.__name__:
-                    # New-style classes support __getattribute__, which is called
-                    # on *any* attribute access, so they get updated the first
-                    # time they're used after a reload.
-                    # We have to pass in newvalue because of Python's scoping.
-                    def updater(self, s, newvalue=new_obj):
-                        # This function is to be an __getattr__ or __getattribute__.
-                        try:
-                            self.__class__ = newvalue
-                        except:
-                            try:
-                                del self.__class__.__getattribute__
-                            except AttributeError:
-                                del self.__class__.__getattr__
-                        return getattr(self, s)
-                    old_obj.__getattribute__ = updater
-                elif type(new_obj) == types.ClassType:
-                    old_obj.__dict__.update(new_obj.__dict__)
+                if type(new_obj) == ClassType:
+                    if hasattr(old_obj.__dict__, 'update'):
+                        old_obj.__dict__.update(new_obj.__dict__)
                 elif type(new_obj) == types.FunctionType:
                     update_function(old_obj,
                            new_obj,
@@ -240,7 +250,7 @@ def importmodule(filename):
         # In case the source file was in the Python path
         # it can be imported now.
         module = __import__(modname, globals(), locals(), [])
-    except ImportError, e:
+    except ImportError as e:
         failed_modname = str(e).split()[-1]
         if str(e).split()[-1] == modname:
             # The ImportError wasn't caused by some nested import
@@ -301,7 +311,7 @@ def main(argv=None):
             opts, args = getopt.getopt(argv[1:], "hw:sv",
                                        ["help", "wait",
                                         "skipsystem", "verbose"])
-        except getopt.error, msg:
+        except getopt.error as msg:
              raise Usage(msg)
 
         for o, a in opts:
@@ -318,7 +328,7 @@ def main(argv=None):
             if o in ("-v", "--verbose"):
                 verbose = True
 
-    except Usage, err:
+    except Usage as err:
         print >>sys.stderr, "%s:" % argv[0],
         print >>sys.stderr, err.msg
         print >>sys.stderr, "for help use --help"
@@ -337,14 +347,14 @@ def main(argv=None):
     firstarg = argv[1]
     sourcefile = os.path.abspath(firstarg)
     if not os.path.isfile(sourcefile):
-        print "%s: File '%s' does not exist." % (os.path.basename(argv[0]),
-                                                      sourcefile)
+        print("%s: File '%s' does not exist." % (os.path.basename(argv[0]),
+                                                      sourcefile))
         sys.exit(1)
     try:
         module = importmodule(sourcefile)
-    except ImportError, e:
-        print "%s: Unable to import '%s' as module: %s" % (os.path.basename(argv[0]),
-                                                          sourcefile, e)
+    except ImportError as e:
+        print("%s: Unable to import '%s' as module: %s" % (os.path.basename(argv[0]),
+                                                          sourcefile, e))
         sys.exit(1)
 
     # Remove hotswap.py from arguments that argv looks as
@@ -356,7 +366,7 @@ def main(argv=None):
         seconds=wait,
         verbose=verbose)
 
-    # Run the Python source file with hotswapping enabled. 
+    # Run the Python source file with hotswapping enabled.
     module.main()
 
 if __name__ == '__main__':
