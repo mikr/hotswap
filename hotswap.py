@@ -15,7 +15,7 @@ module.main() is called. Hotswapping is enabled so that changes
 in the source code take effect without restarting the program.
 """
 
-version = "0.3"
+version = "0.3.1"
 __author__ = "Michael Krause"
 __email__ = "michael@krause-software.com"
 
@@ -252,7 +252,8 @@ def importmodule(filename):
         module = __import__(modname, globals(), locals(), [])
     except ImportError as e:
         failed_modname = str(e).split()[-1]
-        if str(e).split()[-1] == modname:
+        failed_modname = failed_modname.replace("'", "")
+        if failed_modname == modname:
             # The ImportError wasn't caused by some nested import
             # but our module was not found, so we add the source files
             # directory to the path and import it again.
